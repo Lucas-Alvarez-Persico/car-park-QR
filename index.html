@@ -26,12 +26,14 @@
     </div>
 
     <label class="field">
-      <span>Usuario</span>
-      <input id="login-user" type="text" inputmode="text" autocapitalize="none" spellcheck="false" required>
+      <span>Departamento</span>
+      <input id="login-user" type="text" placeholder="Ej: 1A" maxlength="60"
+             autocapitalize="characters" autocomplete="username"
+             spellcheck="false" required>
     </label>
     <label class="field">
       <span>Contraseña</span>
-      <input id="login-pass" type="password" required>
+      <input id="login-pass" type="password" autocomplete="current-password" required>
     </label>
     <p id="login-error" class="form-error" hidden></p>
     <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
@@ -50,6 +52,7 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <span id="mi-depto" class="depto-chip" hidden></span>
         <span id="clock" class="clock"></span>
         <button id="logout-btn" class="btn btn-ghost btn-sm" type="button">Salir</button>
       </div>
@@ -94,8 +97,7 @@
 
       <label class="field">
         <span>Departamento que invita</span>
-        <input id="in-depto" type="text" placeholder="Ej: 5B" maxlength="12"
-               autocapitalize="characters" required>
+        <input id="in-depto" type="text" readonly aria-readonly="true">
       </label>
       <p id="depto-cupo" class="cupo" role="status" hidden></p>
 

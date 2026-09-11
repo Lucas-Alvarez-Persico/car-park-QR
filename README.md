@@ -12,6 +12,7 @@ Sitio estático (HTML + CSS + JS), sin dependencias ni build.
 | `app.js` | Lógica, reglas de negocio y persistencia |
 | `img/` | Fotos del estacionamiento, ya recortadas y optimizadas |
 | `supabase/schema.sql` | Esquema, reglas y políticas de la base |
+| `supabase/auth.sql` | Usuarios por departamento y cierre del acceso anónimo |
 | `supabase-config.js` | URL y anon key del proyecto — **fuera del repo** |
 | `supabase-config.example.js` | Plantilla para copiar en un clon nuevo |
 | `db.js` | Los pedidos contra la base, con `fetch` puro |
@@ -32,16 +33,27 @@ mostrando el error de configuración.
 
 ## Acceso
 
-Usuario `admin`, contraseña `123` — hardcodeados en `CONFIG.USERS` (`app.js`).
-La sesión vive en `sessionStorage`: al cerrar la pestaña vuelve a pedir login,
-que es el comportamiento deseado para un QR que usan distintas personas.
+**Se entra con el departamento**, no con un usuario genérico: cada depto es una
+cuenta de Supabase Auth. La sesión vive en `sessionStorage`, así que al cerrar
+la pestaña hay que volver a entrar — que es lo correcto para un QR que usan
+distintas personas en el mismo teléfono.
 
-> **Este login no protege los datos.** Es una pantalla del navegador: la
-> contraseña está a la vista en `app.js` y, sobre todo, la base no se entera de
-> que existe. Cualquiera que tenga la URL y la anon key puede escribir turnos
-> hablándole directo a la API, sin pasar por esta pantalla. Sirve para evitar
-> registros accidentales, nada más. La protección real llega con Supabase Auth
-> (ver *Seguridad, por ahora*).
+Departamentos de prueba: `1A`, `2A` y `3A`, todos con contraseña `123`.
+
+Internamente cada depto es el mail `<depto>@riglosplaza.com.ar`. Es solo un
+identificador: **nunca se manda un correo a esa dirección**, y el dominio no
+necesita existir. La app arma el mail sola, el vecino solo escribe `1A`.
+
+### Qué cambia al estar logueado
+
+- La barra superior muestra el departamento y **cuántas invitaciones le quedan**
+  este mes, con color según queden varias, una o ninguna.
+- Al registrar un ingreso, **el departamento ya viene puesto y no se puede
+  editar**: sale de la sesión.
+
+> **El departamento nunca viaja desde el formulario.** El trigger de alta lo
+> sobrescribe con el del usuario logueado. Si no fuera así, cualquiera podría
+> gastarle el cupo mensual a otro departamento simplemente cambiando el campo.
 
 ## Reglas implementadas
 
@@ -141,14 +153,33 @@ Google Fonts y tienen fallback a fuentes del sistema.
 1. Crear una cuenta y un proyecto en [supabase.com](https://supabase.com) —
    el plan **Free** alcanza de sobra. Elegir la región más cercana
    (`South America (São Paulo)`).
-2. En el **SQL Editor** del proyecto, pegar entero
-   [`supabase/schema.sql`](supabase/schema.sql) y ejecutarlo. Se corre una
-   sola vez y es idempotente: volver a correrlo no rompe nada.
-3. En **Project Settings → Data API**, copiar *Project URL* y la clave
+2. En el **SQL Editor**, pegar y ejecutar
+   [`supabase/schema.sql`](supabase/schema.sql) — tablas, reglas e índices.
+3. Después, en el mismo editor, ejecutar
+   [`supabase/auth.sql`](supabase/auth.sql) — usuarios por departamento y
+   cierre del acceso anónimo. **En este orden**, porque el segundo modifica
+   cosas que crea el primero.
+4. En **Project Settings → Data API**, copiar *Project URL* y la clave
    *anon / publishable*, y pegarlas en
    [`supabase-config.js`](supabase-config.js).
-4. Abrir `test-db.html` y correr las dos pruebas. La primera solo lee; la
-   segunda da de alta un turno de prueba y lo cierra.
+5. Abrir `test-db.html` y correr los tres pasos: login, lectura y ciclo
+   completo.
+
+### Agregar los departamentos reales
+
+`auth.sql` deja una función para eso. Una línea por departamento en el SQL
+Editor:
+
+```sql
+select public.crear_depto('4B', 'la-clave-de-ese-depto');
+```
+
+> **Ojo con las contraseñas.** `crear_depto()` escribe directo en `auth.users`,
+> lo que **saltea la política de contraseñas de Supabase** (mínimo 6
+> caracteres). Es lo que permite usar `123` para probar. Para las claves de
+> verdad conviene el panel de Supabase (Authentication → Users → Add user, con
+> *Auto Confirm*) y después enlazar el perfil a mano, o usar contraseñas que
+> cumplan la política.
 
 La **anon key va en el cliente a propósito**: está diseñada para eso y lo que
 permite hacer lo definen las políticas de RLS. La que nunca tiene que salir del
@@ -190,12 +221,26 @@ Los dos índices únicos parciales tapan un agujero que la versión con
 dos altas simultáneas en la misma cochera se pisan; con eso, la segunda recibe
 un error claro.
 
-### Seguridad, por ahora
+### Seguridad
 
-RLS está activo, pero las tres políticas incluyen el rol `anon`: **cualquiera
-con la URL y la anon key puede leer y escribir turnos**. Es el paso intermedio
-acordado hasta sumar usuarios. Cuando eso pase, alcanza con sacar `anon` de las
-políticas al final de `schema.sql` y dejar solo `authenticated`.
+`auth.sql` **saca el rol `anon` de todas las políticas**: sin sesión iniciada la
+base no devuelve ni acepta nada. La anon key sigue viajando al navegador, pero
+por sí sola ya no sirve para leer ni escribir turnos.
+
+Quién puede hacer qué, estando logueado:
+
+| Acción | Quién |
+|---|---|
+| Ver el estado de las cocheras y el historial | Cualquier departamento |
+| Registrar un ingreso | Cualquiera, siempre a nombre de **su propio** depto |
+| Marcar una salida | Cualquiera, incluso de un auto que invitó otro |
+| Ver perfiles ajenos | Nadie — cada uno ve solo el suyo |
+| Borrar turnos | Nadie desde la app |
+
+La lectura del historial es de todos a propósito: para saber si una cochera está
+libre hay que poder ver la que ocupó otro departamento. Y la salida la puede
+marcar cualquiera porque el auto se fue físicamente y la cochera tiene que
+quedar libre, sin depender de que aparezca quien invitó.
 
 No hay política de `delete` a propósito: el historial no se borra desde la app.
 Por eso **se quitó el botón "Limpiar historial"**: el historial ahora es

@@ -4,8 +4,7 @@
    ========================================================= */
 
 const CONFIG = {
-  // Usuario hardcodeado (provisorio, hasta tener usuarios en Supabase)
-  USERS: { admin: '123' },
+  // Los usuarios viven en Supabase Auth: uno por departamento.
   // Cocheras disponibles. La foto se muestra mientras la cochera esta libre.
   SPOTS: [
     { id: 1, name: 'Cochera 1', foto: 'img/cochera-1.jpg' },
@@ -18,13 +17,11 @@ const CONFIG = {
   TICK_MS: 15000                     // cada cuanto se redibujan los contadores
 };
 
-const SESSION_KEY = 'rp_session_v1';
-
 /* ================= Estado =================
    La base es la fuente de verdad. Esto es solo la copia en memoria
    de la ultima lectura, para poder dibujar sin volver a pedir. */
 
-let state = { spots: {}, history: [] };
+let state = { spots: {}, history: [], cupo: null };
 let carga = 'inicial';   // inicial | cargando | listo | error
 let errorCarga = null;
 let refrescando = false;
@@ -39,10 +36,16 @@ state.spots = vaciarSpots();
 
 // Lee la base y deja el estado listo para dibujar.
 async function cargarEstado() {
-  const { activos, historial } = await RP.estado(CONFIG.HISTORY_MAX);
+  const { activos, historial, cupo } = await RP.estado(CONFIG.HISTORY_MAX);
   const spots = vaciarSpots();
   activos.forEach(t => { if (t.spotId in spots) spots[t.spotId] = t; });
-  state = { spots, history: historial };
+  state = { spots, history: historial, cupo };
+}
+
+// Si el token ya no sirve no hay nada que reintentar: hay que volver a entrar.
+function sesionVencida(e) {
+  if (e && e.codigo === 'RP_SESION') { showLogin('Tu sesión venció. Entrá de nuevo.'); return true; }
+  return false;
 }
 
 // silencioso = refresco de fondo: si falla no rompe lo que ya se ve.
@@ -165,9 +168,28 @@ function patenteEstacionada(plate) {
 /* ================= Render ================= */
 
 function render() {
+  renderMiDepto();
   renderSpots();
   renderHistory();
   renderClock();
+}
+
+// Departamento logueado y cuantas invitaciones le quedan este mes
+function renderMiDepto() {
+  const el = $('#mi-depto');
+  const depto = RP.auth.depto();
+  if (!depto) { el.hidden = true; return; }
+
+  el.hidden = false;
+  if (state.cupo === null || state.cupo === undefined) {
+    el.className = 'depto-chip';
+    el.textContent = depto;
+    return;
+  }
+  const n = state.cupo;
+  el.className = 'depto-chip ' + (n === 0 ? 'chip-none' : n === 1 ? 'chip-warn' : 'chip-ok');
+  el.innerHTML = `<strong>${esc(depto)}</strong>` +
+    `<span>${n === 0 ? 'sin cupo' : `${n} de ${CONFIG.MONTHLY_LIMIT}`}</span>`;
 }
 
 function renderClock() {
@@ -408,8 +430,8 @@ function openEntryModal(spotId) {
   $('#entry-spot-label').textContent =
     `${spot.name} · el ingreso queda registrado ahora, no se admiten reservas.`;
   $('#in-patente').value = '';
-  $('#in-depto').value = '';
-  $('#depto-cupo').hidden = true;
+  $('#in-depto').value = RP.auth.depto() || '';
+  renderCupoModal();
   $('#in-ingreso').value = fmtHour(now);
   $('#in-ingreso').dataset.ts = String(now);
   buildEgresoOptions(now);
@@ -434,33 +456,15 @@ function setEnviando(v) {
   btn.textContent = v ? 'Registrando…' : 'Registrar ingreso';
 }
 
-/* Aviso en vivo del cupo mensual mientras se escribe el departamento.
-   Se le pregunta a la base, que es la unica que ve todos los turnos del mes;
-   con debounce para no disparar un pedido por tecla. */
-let cupoTimer = null;
-let cupoToken = 0;
-
-function renderCupo() {
+/* El cupo ya no se consulta por tecla: el departamento es el de la sesion
+   y su cupo viene en la misma lectura que el resto del estado. */
+function renderCupoModal() {
   const el = $('#depto-cupo');
-  const depto = normalizeDepto($('#in-depto').value);
+  const depto = RP.auth.depto();
+  const restante = state.cupo;
 
-  clearTimeout(cupoTimer);
-  if (!depto) { el.hidden = true; return; }
+  if (!depto || restante === null || restante === undefined) { el.hidden = true; return; }
 
-  const token = ++cupoToken;
-  cupoTimer = setTimeout(async () => {
-    try {
-      const restante = await RP.cupoRestante(depto);
-      if (token !== cupoToken) return;   // llego tarde, ya se escribio otra cosa
-      pintarCupo(depto, restante);
-    } catch (e) {
-      if (token === cupoToken) el.hidden = true;
-    }
-  }, 350);
-}
-
-function pintarCupo(depto, restante) {
-  const el = $('#depto-cupo');
   const total = CONFIG.MONTHLY_LIMIT;
   const now = Date.now();
 
@@ -489,7 +493,6 @@ async function submitEntry(ev) {
   if (entrySpotId === null || enviando) return;
 
   const plate = normalizePlate($('#in-patente').value);
-  const depto = normalizeDepto($('#in-depto').value);
   const duracionMin = Number($('#in-egreso').dataset.min);
 
   // Chequeos locales: solo para no mandar un pedido que ya sabemos que falla
@@ -497,8 +500,12 @@ async function submitEntry(ev) {
   if (!isValidPlate(plate)) {
     return showEntryError('Patente inválida. Formatos válidos: ABC123 o AB123CD.');
   }
-  if (!depto) return showEntryError('Indicá el departamento que invita.');
   if (!duracionMin) return showEntryError('Elegí la hora de egreso.');
+  if (state.cupo === 0) {
+    return showEntryError(
+      `El departamento ${RP.auth.depto()} ya usó sus ${CONFIG.MONTHLY_LIMIT} ` +
+      `invitaciones de este mes. El cupo se renueva el ${fmtDate(nextMonthStart(Date.now()))}.`);
+  }
 
   const dondeEsta = patenteEstacionada(plate);
   if (dondeEsta) {
@@ -510,8 +517,9 @@ async function submitEntry(ev) {
   try {
     // El resto de las reglas (cooldown, cupo, cochera libre) las decide
     // la base, que es la unica que ve lo que hicieron los demas telefonos.
+    // El depto lo pone el servidor a partir del usuario logueado
     const turno = await RP.registrarIngreso(
-      { cochera: entrySpotId, patente: plate, depto, duracionMin });
+      { cochera: entrySpotId, patente: plate, duracionMin });
 
     setEnviando(false);
     closeEntryModal();
@@ -520,6 +528,7 @@ async function submitEntry(ev) {
     toast(`${turno.patente} registrado hasta las ${fmtHour(turno.egresoPrev)}`);
   } catch (e) {
     setEnviando(false);
+    if (sesionVencida(e)) return;
     showEntryError(e.message);
     // Si la cochera se ocupo mientras tanto, conviene mostrar la realidad
     if (e.codigo === 'RP_COCHERA_TOMADA' || e.codigo === 'RP_PATENTE_ACTIVA') {
@@ -571,40 +580,67 @@ function closeConfirm() {
 function showApp() {
   $('#login-screen').hidden = true;
   $('#app').hidden = false;
+  renderMiDepto();
   renderClock();
   refrescar();
 }
 
-function showLogin() {
+function showLogin(motivo) {
   $('#app').hidden = true;
   $('#login-screen').hidden = false;
   $('#login-form').reset();
-  $('#login-error').hidden = true;
+  setEntrando(false);
+  state = { spots: vaciarSpots(), history: [], cupo: null };
+  carga = 'inicial';
+
+  const err = $('#login-error');
+  if (motivo) { err.textContent = motivo; err.hidden = false; }
+  else err.hidden = true;
 }
 
-function submitLogin(ev) {
-  ev.preventDefault();
-  const user = $('#login-user').value.trim().toLowerCase();
-  const pass = $('#login-pass').value;
+let entrando = false;
+function setEntrando(v) {
+  entrando = v;
+  const btn = $('#login-form button[type="submit"]');
+  btn.disabled = v;
+  btn.textContent = v ? 'Entrando…' : 'Ingresar';
+}
 
-  if (CONFIG.USERS[user] !== undefined && CONFIG.USERS[user] === pass) {
-    sessionStorage.setItem(SESSION_KEY, user);
-    showApp();
+async function submitLogin(ev) {
+  ev.preventDefault();
+  if (entrando) return;
+
+  const depto = normalizeDepto($('#login-user').value);
+  const pass = $('#login-pass').value;
+  const err = $('#login-error');
+
+  if (!depto) {
+    err.textContent = 'Indicá tu departamento.';
+    err.hidden = false;
     return;
   }
-  const err = $('#login-error');
-  err.textContent = 'Usuario o contraseña incorrectos.';
-  err.hidden = false;
-  $('#login-pass').value = '';
-  $('#login-pass').focus();
+
+  err.hidden = true;
+  setEntrando(true);
+  try {
+    await RP.auth.iniciarSesion(depto, pass);
+    setEntrando(false);
+    showApp();
+  } catch (e) {
+    setEntrando(false);
+    err.textContent = e.message;
+    err.hidden = false;
+    $('#login-pass').value = '';
+    $('#login-pass').focus();
+  }
 }
 
 /* ================= Eventos ================= */
 
 $('#login-form').addEventListener('submit', submitLogin);
 
-$('#logout-btn').addEventListener('click', () => {
-  sessionStorage.removeItem(SESSION_KEY);
+$('#logout-btn').addEventListener('click', async () => {
+  await RP.auth.cerrarSesion();
   showLogin();
 });
 
@@ -621,11 +657,6 @@ $('#entry-form').addEventListener('submit', submitEntry);
 $('#in-patente').addEventListener('input', ev => {
   ev.target.value = normalizePlate(ev.target.value);
   hideEntryError();
-});
-$('#in-depto').addEventListener('input', ev => {
-  ev.target.value = ev.target.value.toUpperCase();
-  hideEntryError();
-  renderCupo();
 });
 $('#egreso-btn').addEventListener('click', () => {
   if (egresoDropdownAbierto()) closeEgresoDropdown();
@@ -664,6 +695,7 @@ $('#confirm-ok').addEventListener('click', async () => {
     closeConfirm();
   } catch (e) {
     closeConfirm();
+    if (sesionVencida(e)) return;
     toast(e.message);
     refrescar({ silencioso: true });
   } finally {
@@ -702,5 +734,5 @@ document.addEventListener('visibilitychange', () => {
 
 /* ================= Arranque ================= */
 
-if (sessionStorage.getItem(SESSION_KEY)) showApp();
+if (RP.auth.haySesion()) showApp();
 else showLogin();

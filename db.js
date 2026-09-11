@@ -1,8 +1,9 @@
 /* =========================================================
    Riglos Plaza - capa de datos contra Supabase
 
-   Habla directo con la API REST (PostgREST) usando fetch, sin
-   la libreria supabase-js: la app sigue sin dependencias ni build.
+   Habla directo con la API REST (PostgREST) y con GoTrue usando
+   fetch, sin la libreria supabase-js: la app sigue sin dependencias
+   ni build.
 
    Expone window.RP. Todas las funciones devuelven promesas y
    tiran RpError con un mensaje ya listo para mostrarle a la gente.
@@ -12,7 +13,21 @@ window.RP = (() => {
   'use strict';
 
   const cfg = window.SUPABASE_CONFIG || {};
-  const REST = `${String(cfg.URL || '').replace(/\/+$/, '')}/rest/v1`;
+  const BASE = String(cfg.URL || '').replace(/\/+$/, '');
+  const REST = `${BASE}/rest/v1`;
+  const AUTH = `${BASE}/auth/v1`;
+
+  // Cada departamento es un usuario. El mail es solo un identificador
+  // interno: nunca se manda correo a esta direccion.
+  const DOMINIO = 'riglosplaza.com.ar';
+  // Se escribe el departamento ("1A"), pero si alguien pega el mail entero
+  // tambien se acepta, para no trabarlo por un detalle de formato.
+  const emailDe = valor => {
+    const v = String(valor).trim().toLowerCase().replace(/\s+/g, '');
+    return v.includes('@') ? v : `${v}@${DOMINIO}`;
+  };
+
+  const SESION_KEY = 'rp_auth_v1';
 
   const configurado = () =>
     /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(String(cfg.URL || '')) &&
@@ -65,21 +80,17 @@ window.RP = (() => {
           'La duracion tiene que ir de a 30 minutos, hasta 4 h.',
           'RP_DURACION', cuerpo);
       }
-      if (msg.includes('depto')) {
-        return new RpError('Departamento invalido.', 'RP_DEPTO', cuerpo);
-      }
       return new RpError('Los datos no cumplen una regla de la base.',
                          'RP_CHECK', cuerpo);
     }
 
     if (status === 401 || status === 403) {
-      return new RpError(
-        'La base rechazo la conexion. Revisar la anon key y las politicas de RLS.',
-        'RP_NO_AUTORIZADO', cuerpo);
+      return new RpError('Tu sesion venció. Volvé a entrar.',
+                         'RP_SESION', cuerpo);
     }
     if (status === 404) {
       return new RpError(
-        'No se encontro la tabla o la funcion. Falta correr schema.sql.',
+        'No se encontro la tabla o la funcion. Falta correr el SQL del esquema.',
         'RP_SIN_ESQUEMA', cuerpo);
     }
 
@@ -87,18 +98,139 @@ window.RP = (() => {
                        'RP_HTTP_' + status, cuerpo);
   }
 
+  /* ---------------- Sesion ----------------
+     Vive en sessionStorage: al cerrar la pestana hay que volver a
+     entrar, que es lo que corresponde para un QR que usan distintas
+     personas en el mismo telefono. */
+
+  let sesion = null;
+
+  function leerSesion() {
+    try {
+      const raw = sessionStorage.getItem(SESION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) { return null; }
+  }
+
+  function guardarSesion(s) {
+    sesion = s;
+    try {
+      if (s) sessionStorage.setItem(SESION_KEY, JSON.stringify(s));
+      else sessionStorage.removeItem(SESION_KEY);
+    } catch (e) { /* modo privado sin storage: la sesion dura lo que la pagina */ }
+  }
+
+  sesion = leerSesion();
+
+  const headersBase = () => ({
+    apikey: cfg.ANON_KEY,
+    'Content-Type': 'application/json'
+  });
+
+  async function pedirAuth(ruta, body, extra) {
+    if (!configurado()) {
+      throw new RpError(
+        'Falta completar supabase-config.js con la URL y la anon key del proyecto.',
+        'RP_SIN_CONFIG');
+    }
+    let res;
+    try {
+      res = await fetch(AUTH + ruta, {
+        method: 'POST',
+        headers: Object.assign(headersBase(), extra || {}),
+        body: body ? JSON.stringify(body) : undefined
+      });
+    } catch (e) {
+      throw new RpError('Sin conexion con el servidor.', 'RP_SIN_RED', e.message);
+    }
+
+    const texto = await res.text();
+    const datos = texto ? JSON.parse(texto) : null;
+
+    if (!res.ok) {
+      // GoTrue cambio de formato entre versiones: contemplamos los dos
+      const codigo = (datos && (datos.error_code || datos.error)) || '';
+      const msg = (datos && (datos.msg || datos.error_description || datos.message)) || '';
+      if (/invalid[_ ]?(grant|credentials)/i.test(codigo) ||
+          /invalid login credentials/i.test(msg)) {
+        throw new RpError('Departamento o contraseña incorrectos.',
+                          'RP_CREDENCIALES', datos);
+      }
+      throw new RpError(msg || `Error ${res.status} al iniciar sesion.`,
+                        'RP_AUTH_' + res.status, datos);
+    }
+    return datos;
+  }
+
+  function guardarDesdeToken(datos) {
+    guardarSesion({
+      access_token: datos.access_token,
+      refresh_token: datos.refresh_token,
+      // expires_at viene en segundos; lo pasamos a ms
+      expira: (datos.expires_at
+        ? datos.expires_at * 1000
+        : Date.now() + (datos.expires_in || 3600) * 1000),
+      userId: datos.user && datos.user.id,
+      depto: datos.user && datos.user.user_metadata && datos.user.user_metadata.depto
+    });
+    return sesion;
+  }
+
+  async function iniciarSesion(depto, password) {
+    const datos = await pedirAuth('/token?grant_type=password',
+      { email: emailDe(depto), password: String(password) });
+    return guardarDesdeToken(datos);
+  }
+
+  async function refrescarToken() {
+    if (!sesion || !sesion.refresh_token) {
+      throw new RpError('No hay sesion activa.', 'RP_SESION');
+    }
+    try {
+      const datos = await pedirAuth('/token?grant_type=refresh_token',
+        { refresh_token: sesion.refresh_token });
+      return guardarDesdeToken(datos);
+    } catch (e) {
+      guardarSesion(null);          // el refresh no sirve mas
+      throw new RpError('Tu sesion venció. Volvé a entrar.', 'RP_SESION');
+    }
+  }
+
+  async function cerrarSesion() {
+    const s = sesion;
+    guardarSesion(null);
+    if (!s) return;
+    try {
+      await pedirAuth('/logout', null,
+        { Authorization: `Bearer ${s.access_token}` });
+    } catch (e) { /* si falla, la sesion local ya se borro igual */ }
+  }
+
+  const haySesion = () => !!(sesion && sesion.access_token);
+  const deptoActual = () => (sesion ? sesion.depto : null);
+
+  // Refresca por adelantado si al token le queda menos de un minuto
+  async function tokenVigente() {
+    if (!haySesion()) return null;
+    if (sesion.expira && sesion.expira - Date.now() < 60000) {
+      await refrescarToken();
+    }
+    return sesion.access_token;
+  }
+
   /* ---------------- Transporte ---------------- */
 
-  async function pedir(ruta, opciones = {}) {
+  async function pedir(ruta, opciones = {}, reintento = false) {
     if (!configurado()) {
       throw new RpError(
         'Falta completar supabase-config.js con la URL y la anon key del proyecto.',
         'RP_SIN_CONFIG');
     }
 
+    const token = await tokenVigente();
     const headers = Object.assign({
       apikey: cfg.ANON_KEY,
-      Authorization: `Bearer ${cfg.ANON_KEY}`,
+      Authorization: `Bearer ${token || cfg.ANON_KEY}`,
       'Content-Type': 'application/json'
     }, opciones.headers || {});
 
@@ -107,6 +239,12 @@ window.RP = (() => {
       res = await fetch(REST + ruta, Object.assign({}, opciones, { headers }));
     } catch (e) {
       throw new RpError('Sin conexion con la base.', 'RP_SIN_RED', e.message);
+    }
+
+    // Token rechazado: se intenta refrescar una sola vez
+    if (res.status === 401 && haySesion() && !reintento) {
+      await refrescarToken();
+      return pedir(ruta, opciones, true);
     }
 
     if (!res.ok) {
@@ -121,7 +259,6 @@ window.RP = (() => {
     const texto = await res.text();
     const datos = texto ? JSON.parse(texto) : null;
 
-    // Para los pedidos con count=exact devolvemos tambien el total
     if (rango) {
       const total = Number(String(rango).split('/')[1]);
       if (!Number.isNaN(total)) return { datos, total };
@@ -133,7 +270,6 @@ window.RP = (() => {
 
   const ms = (iso) => (iso ? new Date(iso).getTime() : null);
 
-  // Pasa una fila de la base a la forma que ya usa la app
   function aTurno(fila) {
     if (!fila) return null;
     return {
@@ -152,14 +288,12 @@ window.RP = (() => {
 
   const COLS = 'id,cochera,patente,depto,duracion_min,ingreso,egreso_previsto,egreso_real';
 
-  // Turnos abiertos = cocheras ocupadas ahora
   async function turnosActivos() {
     const filas = await pedir(
       `/turnos?select=${COLS}&egreso_real=is.null&order=cochera.asc`);
     return filas.map(aTurno);
   }
 
-  // Turnos cerrados = historial, del mas reciente al mas viejo
   async function historial(limite = 200) {
     const filas = await pedir(
       `/turnos?select=${COLS}&egreso_real=not.is.null` +
@@ -167,43 +301,41 @@ window.RP = (() => {
     return filas.map(aTurno);
   }
 
-  // Las dos cosas de una, en paralelo
+  // Estado completo mas el cupo propio, todo en paralelo
   async function estado(limiteHistorial = 200) {
-    const [activos, hist] = await Promise.all([
+    const [activos, hist, cupo] = await Promise.all([
       turnosActivos(),
-      historial(limiteHistorial)
+      historial(limiteHistorial),
+      miCupo()
     ]);
-    return { activos, historial: hist };
+    return { activos, historial: hist, cupo };
   }
 
-  // Alta. El servidor pone ingreso y egreso previsto: aca solo va
-  // cuanto dura la estadia, en minutos.
-  async function registrarIngreso({ cochera, patente, depto, duracionMin }) {
+  // Alta. El servidor pone ingreso, egreso previsto Y departamento:
+  // el depto sale del usuario logueado, no de lo que mande el formulario.
+  async function registrarIngreso({ cochera, patente, duracionMin }) {
     const filas = await pedir('/turnos', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },
       body: JSON.stringify({
         cochera: Number(cochera),
         patente: String(patente).toUpperCase().replace(/[^A-Z0-9]/g, ''),
-        depto: String(depto).toUpperCase().replace(/\s+/g, ''),
         duracion_min: Number(duracionMin)
       })
     });
     return aTurno(Array.isArray(filas) ? filas[0] : filas);
   }
 
-  // Cierre. La hora de salida tambien la pone el servidor.
   async function cerrarTurno(id) {
     const fila = await rpc('cerrar_turno', { p_id: id });
     return aTurno(fila);
   }
 
-  // Invitaciones que le quedan al departamento este mes
-  function cupoRestante(depto) {
-    return rpc('cupo_restante', { p_depto: String(depto).toUpperCase().replace(/\s+/g, '') });
+  // Invitaciones que le quedan al departamento de la sesion
+  function miCupo() {
+    return rpc('mi_cupo', {});
   }
 
-  // Fecha desde la que la patente puede volver, o null si puede entrar ya
   async function patenteLibreDesde(patente) {
     const iso = await rpc('patente_libre_desde', {
       p_patente: String(patente).toUpperCase().replace(/[^A-Z0-9]/g, '')
@@ -218,7 +350,6 @@ window.RP = (() => {
     });
   }
 
-  // Prueba de vida: confirma que hay tabla, permisos y conexion
   async function ping() {
     const r = await pedir('/turnos?select=id&limit=1', {
       method: 'HEAD',
@@ -230,13 +361,20 @@ window.RP = (() => {
   return {
     RpError,
     configurado,
+    auth: {
+      iniciarSesion,
+      cerrarSesion,
+      haySesion,
+      depto: deptoActual,
+      refrescarToken
+    },
     ping,
     estado,
     turnosActivos,
     historial,
     registrarIngreso,
     cerrarTurno,
-    cupoRestante,
+    miCupo,
     patenteLibreDesde
   };
 })();
