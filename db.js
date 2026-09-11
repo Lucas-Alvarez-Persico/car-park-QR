@@ -12,8 +12,13 @@
 window.RP = (() => {
   'use strict';
 
+  // Se normaliza lo que venga: una barra final o un espacio al pegar la
+  // variable de entorno no tienen por que romper el arranque.
   const cfg = window.SUPABASE_CONFIG || {};
-  const BASE = String(cfg.URL || '').replace(/\/+$/, '');
+  const URL_BASE = String(cfg.URL || '').trim().replace(/\/+$/, '');
+  const ANON = String(cfg.ANON_KEY || '').trim();
+
+  const BASE = URL_BASE;
   const REST = `${BASE}/rest/v1`;
   const AUTH = `${BASE}/auth/v1`;
 
@@ -29,9 +34,27 @@ window.RP = (() => {
 
   const SESION_KEY = 'rp_auth_v1';
 
-  const configurado = () =>
-    /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(String(cfg.URL || '')) &&
-    String(cfg.ANON_KEY || '').length > 20;
+  // Devuelve null si esta todo bien, o el motivo concreto si falta algo.
+  // El mensaje tiene que decir que arreglar, no solo que algo falta.
+  function problemaDeConfig() {
+    if (!window.SUPABASE_CONFIG) {
+      return 'No se cargó supabase-config.js. Si es un deploy, revisá que el ' +
+             'build command sea "sh tools/build.sh" y el output directory "dist".';
+    }
+    if (!URL_BASE || /TU-PROYECTO/i.test(URL_BASE)) {
+      return 'Falta la URL del proyecto en supabase-config.js (o en la variable SUPABASE_URL).';
+    }
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(URL_BASE)) {
+      return `La URL del proyecto no tiene el formato esperado: "${URL_BASE}". ` +
+             'Tiene que ser https://xxxx.supabase.co';
+    }
+    if (!ANON || /TU-ANON-KEY/i.test(ANON) || ANON.length < 20) {
+      return 'Falta la anon key en supabase-config.js (o en la variable SUPABASE_ANON_KEY).';
+    }
+    return null;
+  }
+
+  const configurado = () => problemaDeConfig() === null;
 
   /* ---------------- Errores ---------------- */
 
@@ -123,15 +146,13 @@ window.RP = (() => {
   sesion = leerSesion();
 
   const headersBase = () => ({
-    apikey: cfg.ANON_KEY,
+    apikey: ANON,
     'Content-Type': 'application/json'
   });
 
   async function pedirAuth(ruta, body, extra) {
     if (!configurado()) {
-      throw new RpError(
-        'Falta completar supabase-config.js con la URL y la anon key del proyecto.',
-        'RP_SIN_CONFIG');
+      throw new RpError(problemaDeConfig(), 'RP_SIN_CONFIG');
     }
     let res;
     try {
@@ -222,15 +243,13 @@ window.RP = (() => {
 
   async function pedir(ruta, opciones = {}, reintento = false) {
     if (!configurado()) {
-      throw new RpError(
-        'Falta completar supabase-config.js con la URL y la anon key del proyecto.',
-        'RP_SIN_CONFIG');
+      throw new RpError(problemaDeConfig(), 'RP_SIN_CONFIG');
     }
 
     const token = await tokenVigente();
     const headers = Object.assign({
-      apikey: cfg.ANON_KEY,
-      Authorization: `Bearer ${token || cfg.ANON_KEY}`,
+      apikey: ANON,
+      Authorization: `Bearer ${token || ANON}`,
       'Content-Type': 'application/json'
     }, opciones.headers || {});
 

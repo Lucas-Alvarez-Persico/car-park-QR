@@ -294,14 +294,11 @@ navegador necesita** y genera ahí `supabase-config.js` a partir de variables de
 entorno. Así la clave nunca vive en el repositorio, y el README, los `.sql` del
 esquema y las herramientas no quedan publicados.
 
-### Configuración del hosting
+### Las variables
 
-| Campo | Valor |
-|---|---|
-| Build command | `sh tools/build.sh` |
-| Output directory | `dist` |
-
-Y dos variables de entorno, cargadas en el panel del hosting:
+Van en el panel del hosting, como variables **de build** (no como secretos del
+runtime): quien las usa es `tools/build.sh` mientras construye, no el sitio ya
+publicado.
 
 | Variable | Valor |
 |---|---|
@@ -310,6 +307,37 @@ Y dos variables de entorno, cargadas en el panel del hosting:
 
 Si falta cualquiera de las dos, **el build falla** en vez de publicar un sitio
 roto que arranca pidiendo la configuración.
+
+### Cloudflare Workers
+
+Cloudflare empuja los proyectos nuevos hacia **Workers**, no hacia Pages, aunque
+se entre por "Workers & Pages". Se reconoce porque el deploy command dice
+`npx wrangler deploy` y **no hay campo "Build output directory"**.
+
+Ahí la carpeta a publicar se declara en [`wrangler.toml`](wrangler.toml), no en
+el panel. Configuración:
+
+| Campo | Valor |
+|---|---|
+| Build command | `sh tools/build.sh` |
+| Deploy command | `npx wrangler deploy` |
+| Carpeta publicada | sale de `[assets] directory` en `wrangler.toml` |
+
+> El campo `name` de `wrangler.toml` tiene que **coincidir con el nombre del
+> Worker** ya creado en Cloudflare. Si no coincide, `wrangler deploy` crea un
+> Worker nuevo aparte y terminás con dos proyectos.
+
+### Cloudflare Pages o Netlify
+
+Si en cambio es un proyecto de Pages (o Netlify), `wrangler.toml` se ignora y la
+carpeta se configura en el panel:
+
+| Campo | Valor |
+|---|---|
+| Build command | `sh tools/build.sh` |
+| Build output directory | `dist` |
+
+Netlify además toma `netlify.toml`, que ya trae ambos valores y las cabeceras.
 
 Para probar el build localmente:
 

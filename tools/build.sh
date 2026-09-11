@@ -19,6 +19,11 @@ set -eu
 : "${SUPABASE_URL:?Falta la variable de entorno SUPABASE_URL}"
 : "${SUPABASE_ANON_KEY:?Falta la variable de entorno SUPABASE_ANON_KEY}"
 
+# Se limpian barras finales y espacios: es el error mas facil de cometer
+# al pegar la URL en el panel del hosting.
+SUPABASE_URL=$(printf '%s' "$SUPABASE_URL" | tr -d '[:space:]' | sed 's#/*$##')
+SUPABASE_ANON_KEY=$(printf '%s' "$SUPABASE_ANON_KEY" | tr -d '[:space:]')
+
 DIST=dist
 
 rm -rf "$DIST"

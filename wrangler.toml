@@ -1,0 +1,25 @@
+# =========================================================
+# Cloudflare Workers (static assets).
+#
+# En Workers la carpeta a publicar NO se configura en el panel:
+# se declara aca. El flujo es:
+#   1. Build command:  sh tools/build.sh   -> genera dist/
+#   2. Deploy command: npx wrangler deploy -> sube lo que diga [assets]
+#
+# OJO: "name" tiene que coincidir con el nombre del Worker que ya
+# creaste en Cloudflare. Si no coincide, wrangler crea otro Worker
+# aparte y vas a terminar con dos.
+# =========================================================
+
+name = "car-park-qr"
+compatibility_date = "2025-09-01"
+
+# Sitio estatico puro: no hay codigo de servidor, solo archivos.
+# Por eso no se declara "main".
+[assets]
+directory = "./dist"
+
+# Las variables SUPABASE_URL y SUPABASE_ANON_KEY NO van aca.
+# Se cargan en el panel como variables de BUILD (no como secretos del
+# runtime), porque quien las usa es tools/build.sh mientras construye,
+# no el Worker una vez desplegado.
