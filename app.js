@@ -6,10 +6,10 @@
 const CONFIG = {
   // Usuario hardcodeado (provisorio, hasta tener backend)
   USERS: { admin: '123' },
-  // Cocheras disponibles
+  // Cocheras disponibles. La foto se muestra mientras la cochera esta libre.
   SPOTS: [
-    { id: 1, name: 'Cochera 1' },
-    { id: 2, name: 'Cochera 2' }
+    { id: 1, name: 'Cochera 1', foto: 'img/cochera-1.jpg' },
+    { id: 2, name: 'Cochera 2', foto: 'img/cochera-2.jpg' }
   ],
   MAX_STAY_MS: 4 * 60 * 60 * 1000,   // estadia maxima: 4 h
   COOLDOWN_MS: 24 * 60 * 60 * 1000,  // misma patente: 1 vez cada 24 h
@@ -196,42 +196,63 @@ function renderSpots() {
   cont.innerHTML = CONFIG.SPOTS.map(spot => {
     const occ = state.spots[spot.id];
 
+    // La foto acompana los dos estados: arriba cuando la cochera esta libre,
+    // de fondo tenido en bordo cuando esta ocupada.
+    const foto = (alt) => spot.foto
+      ? `<div class="spot-photo"${alt ? '' : ' aria-hidden="true"'}>
+           <img src="${esc(spot.foto)}" alt="${esc(alt)}" loading="lazy" decoding="async">
+         </div>`
+      : '';
+
     if (!occ) {
       return `
         <article class="spot spot-free">
-          <div class="spot-head">
-            <h2 class="spot-name">${esc(spot.name)}</h2>
-            <span class="badge badge-free">Libre</span>
+          ${foto(`${spot.name} vacía`)}
+          <div class="spot-body">
+            <div class="spot-head">
+              <h2 class="spot-name">${esc(spot.name)}</h2>
+              <span class="badge badge-free">Libre</span>
+            </div>
+            <p class="spot-empty">Sin vehículo. Registrá el ingreso al momento en que el auto entra.</p>
+            <button class="btn btn-green btn-block" data-action="entry" data-spot="${spot.id}">Registrar ingreso</button>
           </div>
-          <p class="spot-empty">Sin vehículo. Registrá el ingreso al momento en que el auto entra.</p>
-          <button class="btn btn-green btn-block" data-action="entry" data-spot="${spot.id}">Registrar ingreso</button>
         </article>`;
     }
 
     const excedido = now > occ.egresoPrev;
     const cls = excedido ? 'spot-over' : 'spot-busy';
     const badge = excedido
-      ? '<span class="badge badge-over">Excedido</span>'
-      : '<span class="badge badge-busy">Ocupado</span>';
+      ? '<span class="badge badge-over">Excedida</span>'
+      : '<span class="badge badge-busy">Ocupada</span>';
     const restante = excedido
-      ? `<p class="remaining over">Excedido por ${fmtDuration(now - occ.egresoPrev)}</p>`
-      : `<p class="remaining">Tiempo restante: ${fmtDuration(occ.egresoPrev - now)}</p>`;
+      ? `<p class="remaining over">Excedida por ${fmtDuration(now - occ.egresoPrev)}</p>`
+      : `<p class="remaining">Restan ${fmtDuration(occ.egresoPrev - now)}</p>`;
+
+    // Proporcion de la estadia ya consumida, para la barra
+    const total = Math.max(1, occ.egresoPrev - occ.ingreso);
+    const pct = Math.max(0, Math.min(100, ((now - occ.ingreso) / total) * 100));
 
     return `
       <article class="spot ${cls}">
-        <div class="spot-head">
-          <h2 class="spot-name">${esc(spot.name)}</h2>
-          ${badge}
+        ${foto('')}
+        <div class="spot-body">
+          <div class="spot-head">
+            <h2 class="spot-name">${esc(spot.name)}</h2>
+            ${badge}
+          </div>
+          <div><span class="plate">${esc(occ.patente)}</span></div>
+          <dl class="spot-data">
+            <div class="data"><dt>Departamento</dt><dd>${esc(occ.depto)}</dd></div>
+            <div class="data"><dt>Permanencia</dt><dd>${fmtDuration(now - occ.ingreso)}</dd></div>
+            <div class="data"><dt>Ingreso</dt><dd>${fmtHour(occ.ingreso)}</dd></div>
+            <div class="data"><dt>Egreso previsto</dt><dd>${fmtHour(occ.egresoPrev)}</dd></div>
+          </dl>
+          <div class="meter-row">
+            <div class="meter"><div class="meter-fill" style="width:${pct.toFixed(1)}%"></div></div>
+            ${restante}
+          </div>
+          <button class="btn btn-red btn-block" data-action="exit" data-spot="${spot.id}">Marcar salida</button>
         </div>
-        <div><span class="plate">${esc(occ.patente)}</span></div>
-        <dl class="spot-data">
-          <div class="data"><dt>Departamento</dt><dd>${esc(occ.depto)}</dd></div>
-          <div class="data"><dt>Permanencia</dt><dd>${fmtDuration(now - occ.ingreso)}</dd></div>
-          <div class="data"><dt>Ingreso</dt><dd>${fmtHour(occ.ingreso)}</dd></div>
-          <div class="data"><dt>Egreso previsto</dt><dd>${fmtHour(occ.egresoPrev)}</dd></div>
-        </dl>
-        ${restante}
-        <button class="btn btn-red btn-block" data-action="exit" data-spot="${spot.id}">Marcar salida</button>
       </article>`;
   }).join('');
 }
