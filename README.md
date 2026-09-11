@@ -282,3 +282,51 @@ El modal muestra la hora de ingreso **del teléfono**, pero la que se guarda es
 la del servidor. Si el reloj del celular está desfasado, la tarjeta va a
 mostrar un horario levemente distinto al del modal. Es el precio de no confiar
 en el reloj del cliente, y se corrige solo en el refresco.
+
+## Publicar
+
+Pensado para **Cloudflare Pages** o **Netlify**, que en su plan gratuito
+aceptan repositorios privados — a diferencia de GitHub Pages, que en el plan
+Free obliga a que el repo sea público.
+
+`tools/build.sh` arma una carpeta `dist/` con **solo los archivos que el
+navegador necesita** y genera ahí `supabase-config.js` a partir de variables de
+entorno. Así la clave nunca vive en el repositorio, y el README, los `.sql` del
+esquema y las herramientas no quedan publicados.
+
+### Configuración del hosting
+
+| Campo | Valor |
+|---|---|
+| Build command | `sh tools/build.sh` |
+| Output directory | `dist` |
+
+Y dos variables de entorno, cargadas en el panel del hosting:
+
+| Variable | Valor |
+|---|---|
+| `SUPABASE_URL` | `https://xxxx.supabase.co` |
+| `SUPABASE_ANON_KEY` | la clave *anon / publishable* |
+
+Si falta cualquiera de las dos, **el build falla** en vez de publicar un sitio
+roto que arranca pidiendo la configuración.
+
+Para probar el build localmente:
+
+```bash
+SUPABASE_URL=https://xxxx.supabase.co SUPABASE_ANON_KEY=sb_publishable_xxx sh tools/build.sh
+```
+
+### Qué NO se publica
+
+`dist/` se arma copiando archivo por archivo, no clonando la carpeta. Quedan
+afuera `README.md`, `supabase/*.sql` y `tools/`. Se agregan un `robots.txt` que
+bloquea a los buscadores y cabeceras `X-Robots-Tag: noindex`, porque es una
+demo y no tiene por qué aparecer en Google.
+
+### Antes de que lo use gente de verdad
+
+La demo sale con las contraseñas `123` para `1A`, `2A` y `3A`. Eso es cómodo
+para mostrar, pero significa que **cualquiera que llegue a la URL puede entrar**
+y ver el historial completo. Mientras siga así, no cargar patentes ni
+departamentos reales: son datos personales de los visitantes del edificio.

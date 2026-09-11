@@ -4,3 +4,6 @@
 # Para un clon nuevo: copiar supabase-config.example.js a supabase-config.js
 # y completarlo.
 supabase-config.js
+
+# Salida del build local
+dist/

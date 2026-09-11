@@ -1,0 +1,13 @@
+# Netlify. Las variables SUPABASE_URL y SUPABASE_ANON_KEY se cargan en
+# Site configuration -> Environment variables (no van en este archivo).
+[build]
+  command = "sh tools/build.sh"
+  publish = "dist"
+
+# Cabeceras de la demo: sin indexar y con lo basico de seguridad.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "no-referrer"
