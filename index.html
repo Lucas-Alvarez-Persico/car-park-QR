@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>Riglos Plaza — Cocheras de cortesía</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ===== LOGIN ===== -->
+<section id="login-screen" class="login-screen">
+  <form id="login-form" class="login-card" autocomplete="off">
+    <div class="brand">
+      <div class="brand-mark">RP</div>
+      <div>
+        <h1>Riglos Plaza</h1>
+        <p>Cocheras de cortesía</p>
+      </div>
+    </div>
+    <label class="field">
+      <span>Usuario</span>
+      <input id="login-user" type="text" inputmode="text" autocapitalize="none" spellcheck="false" required>
+    </label>
+    <label class="field">
+      <span>Contraseña</span>
+      <input id="login-pass" type="password" required>
+    </label>
+    <p id="login-error" class="form-error" hidden></p>
+    <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
+  </form>
+</section>
+
+<!-- ===== APP ===== -->
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand brand-sm">
+        <div class="brand-mark">RP</div>
+        <div>
+          <h1>Riglos Plaza</h1>
+          <p>Cocheras de cortesía</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="clock" class="clock"></span>
+        <button id="logout-btn" class="btn btn-ghost" type="button">Salir</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="spots" id="spots"></section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Movimientos del día</h2>
+        <button id="clear-history" class="btn btn-ghost btn-sm" type="button">Limpiar historial</button>
+      </div>
+      <div id="history" class="history"></div>
+    </section>
+  </main>
+</div>
+
+<!-- ===== MODAL: INGRESO ===== -->
+<div id="entry-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="entry-title">
+    <div class="modal-head">
+      <h2 id="entry-title">Registrar ingreso</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Cerrar">&times;</button>
+    </div>
+    <form id="entry-form" autocomplete="off">
+      <p class="modal-sub" id="entry-spot-label"></p>
+
+      <label class="field">
+        <span>Patente</span>
+        <input id="in-patente" type="text" placeholder="AB123CD o ABC123"
+               autocapitalize="characters" spellcheck="false" maxlength="10" required>
+      </label>
+
+      <label class="field">
+        <span>Departamento que invita</span>
+        <input id="in-depto" type="text" placeholder="Ej: 5B" maxlength="12"
+               autocapitalize="characters" required>
+      </label>
+      <p id="depto-cupo" class="cupo" role="status" hidden></p>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Hora de ingreso</span>
+          <input id="in-ingreso" type="text" readonly>
+        </label>
+        <div class="field">
+          <span>Hora de egreso</span>
+          <div class="dropdown" id="egreso-dd">
+            <button type="button" class="dropdown-btn" id="egreso-btn"
+                    aria-haspopup="listbox" aria-expanded="false">
+              <span id="egreso-label">--:--</span>
+            </button>
+            <div class="dropdown-list" id="egreso-list" role="listbox"
+                 aria-label="Hora de egreso" hidden></div>
+          </div>
+          <input type="hidden" id="in-egreso">
+        </div>
+      </div>
+      <p class="hint">Opciones cada 30 minutos hasta el máximo permitido (4 h),
+         que viene seleccionado por defecto.</p>
+
+      <p id="entry-error" class="form-error" hidden></p>
+
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+        <button type="submit" class="btn btn-primary">Registrar ingreso</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ===== MODAL: CONFIRMACION ===== -->
+<div id="confirm-modal" class="modal" hidden>
+  <div class="modal-backdrop" data-close></div>
+  <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-head">
+      <h2 id="confirm-title">Confirmar</h2>
+      <button class="icon-btn" type="button" data-close aria-label="Cerrar">&times;</button>
+    </div>
+    <div id="confirm-body" class="confirm-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+      <button type="button" id="confirm-ok" class="btn btn-primary">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
