@@ -1,0 +1,6 @@
+# Credenciales del proyecto Supabase.
+# La anon key no es secreta (viaja al navegador igual), pero se mantiene
+# fuera del repo para que los bots que escanean GitHub no la levanten.
+# Para un clon nuevo: copiar supabase-config.example.js a supabase-config.js
+# y completarlo.
+supabase-config.js

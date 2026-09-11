@@ -374,6 +374,34 @@ button{font-family:inherit}
 .remaining.over{color:var(--plum)}
 .spot-empty{color:var(--ink-soft);font-size:13.5px;line-height:1.6}
 
+/* ---- Carga y error ---- */
+
+/* Aviso de que no se pudo refrescar, sin borrar lo que ya se ve */
+.banner{
+  background:var(--plum-wash);border:1px solid #E2C9C9;color:var(--plum);
+  border-radius:var(--radius);padding:11px 14px;
+  font-size:12.5px;font-weight:500;line-height:1.5;margin-bottom:2px;
+}
+
+.spot-cargando::before{background:var(--line)}
+.spot-cargando .spot-body{gap:14px}
+.skel{
+  background:linear-gradient(90deg, var(--line-soft) 25%, #F7F2E9 37%, var(--line-soft) 63%);
+  background-size:400% 100%;
+  border-radius:6px;
+  animation:skel 1.4s ease infinite;
+}
+.skel-line{height:12px;width:55%}
+.skel-plate{height:42px;width:190px;border-radius:5px}
+@keyframes skel{ from{background-position:100% 0} to{background-position:0 0} }
+@media (prefers-reduced-motion:reduce){ .skel{animation:none} }
+
+/* El error ocupa las dos columnas: no hay estado parcial que mostrar */
+.spot-error{grid-column:1/-1}
+.spot-error::before{background:var(--plum)}
+.spot-error .spot-name{color:var(--plum);font-size:14px;letter-spacing:0;text-transform:none}
+.spot-error .spot-empty strong{color:var(--plum)}
+
 /* ===== Panel / historial ===== */
 .panel{
   background:var(--paper);

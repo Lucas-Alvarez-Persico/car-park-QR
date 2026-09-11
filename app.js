@@ -1,10 +1,10 @@
 /* =========================================================
    Riglos Plaza - Cocheras de cortesia
-   App estatica. Persistencia en localStorage.
+   App estatica. Los datos viven en Supabase (ver db.js).
    ========================================================= */
 
 const CONFIG = {
-  // Usuario hardcodeado (provisorio, hasta tener backend)
+  // Usuario hardcodeado (provisorio, hasta tener usuarios en Supabase)
   USERS: { admin: '123' },
   // Cocheras disponibles. La foto se muestra mientras la cochera esta libre.
   SPOTS: [
@@ -12,45 +12,61 @@ const CONFIG = {
     { id: 2, name: 'Cochera 2', foto: 'img/cochera-2.jpg' }
   ],
   MAX_STAY_MS: 4 * 60 * 60 * 1000,   // estadia maxima: 4 h
-  COOLDOWN_MS: 24 * 60 * 60 * 1000,  // misma patente: 1 vez cada 24 h
   MONTHLY_LIMIT: 5,                  // invitaciones por departamento y por mes
-  HISTORY_MAX: 200
+  HISTORY_MAX: 200,
+  REFRESH_MS: 30000,                 // cada cuanto se vuelve a leer la base
+  TICK_MS: 15000                     // cada cuanto se redibujan los contadores
 };
 
-const STORE_KEY = 'rp_parking_v1';
 const SESSION_KEY = 'rp_session_v1';
 
-/* ================= Estado ================= */
+/* ================= Estado =================
+   La base es la fuente de verdad. Esto es solo la copia en memoria
+   de la ultima lectura, para poder dibujar sin volver a pedir. */
 
-let state = loadState();
+let state = { spots: {}, history: [] };
+let carga = 'inicial';   // inicial | cargando | listo | error
+let errorCarga = null;
+let refrescando = false;
 
-function emptyState() {
+function vaciarSpots() {
   const spots = {};
   CONFIG.SPOTS.forEach(s => { spots[s.id] = null; });
-  return { spots, history: [] };
+  return spots;
 }
 
-function loadState() {
+state.spots = vaciarSpots();
+
+// Lee la base y deja el estado listo para dibujar.
+async function cargarEstado() {
+  const { activos, historial } = await RP.estado(CONFIG.HISTORY_MAX);
+  const spots = vaciarSpots();
+  activos.forEach(t => { if (t.spotId in spots) spots[t.spotId] = t; });
+  state = { spots, history: historial };
+}
+
+// silencioso = refresco de fondo: si falla no rompe lo que ya se ve.
+async function refrescar({ silencioso = false } = {}) {
+  if (refrescando) return;
+  refrescando = true;
   try {
-    const raw = localStorage.getItem(STORE_KEY);
-    if (!raw) return emptyState();
-    const parsed = JSON.parse(raw);
-    const base = emptyState();
-    if (parsed && parsed.spots) {
-      CONFIG.SPOTS.forEach(s => { base.spots[s.id] = parsed.spots[s.id] || null; });
+    if (!silencioso) { carga = 'cargando'; renderSpots(); }
+    await cargarEstado();
+    carga = 'listo';
+    errorCarga = null;
+    ocultarBanner();
+    render();
+  } catch (e) {
+    if (silencioso && carga === 'listo') {
+      // Ya hay datos en pantalla: se avisa sin borrarlos
+      mostrarBanner(`No se pudo actualizar: ${e.message}`);
+    } else {
+      carga = 'error';
+      errorCarga = e;
+      render();
     }
-    if (parsed && Array.isArray(parsed.history)) base.history = parsed.history;
-    return base;
-  } catch (e) {
-    return emptyState();
-  }
-}
-
-function saveState() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(state));
-  } catch (e) {
-    toast('No se pudo guardar en este dispositivo');
+  } finally {
+    refrescando = false;
   }
 }
 
@@ -93,11 +109,6 @@ function normalizeDepto(str) {
   return String(str).toUpperCase().replace(/\s+/g, '');
 }
 
-function monthKey(ms) {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${d.getMonth()}`;
-}
-
 // Primer dia del mes siguiente al de la fecha dada
 function nextMonthStart(ms) {
   const d = new Date(ms);
@@ -119,62 +130,36 @@ function toast(msg) {
   el.textContent = msg;
   el.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+  toastTimer = setTimeout(() => { el.hidden = true; }, 3600);
 }
 
-/* ================= Reglas de negocio ================= */
-
-// Devuelve el ultimo ingreso registrado de una patente (activo o historico)
-function lastEntryFor(plate) {
-  let last = null;
-  CONFIG.SPOTS.forEach(s => {
-    const occ = state.spots[s.id];
-    if (occ && occ.patente === plate && (!last || occ.ingreso > last.ingreso)) last = occ;
-  });
-  state.history.forEach(h => {
-    if (h.patente === plate && (!last || h.ingreso > last.ingreso)) last = h;
-  });
-  return last;
+// Aviso persistente arriba de las cocheras (fallas de refresco)
+function mostrarBanner(msg) {
+  let el = $('#banner');
+  if (!el) {
+    el = document.createElement('p');
+    el.id = 'banner';
+    el.className = 'banner';
+    $('#spots').before(el);
+  }
+  el.textContent = msg;
+  el.hidden = false;
+}
+function ocultarBanner() {
+  const el = $('#banner');
+  if (el) el.hidden = true;
 }
 
-// Invitaciones ya usadas por un departamento en el mes de la fecha de referencia.
-// Cuenta las cocheras ocupadas ahora mas el historial.
-function usosDelMes(depto, ref) {
-  const clave = monthKey(ref);
-  let usos = 0;
+/* ================= Reglas de negocio =================
+   Quien realmente las hace cumplir es la base (ver supabase/schema.sql).
+   Lo de aca es solo para avisar antes de mandar el pedido. */
 
-  CONFIG.SPOTS.forEach(s => {
-    const occ = state.spots[s.id];
-    if (occ && normalizeDepto(occ.depto) === depto && monthKey(occ.ingreso) === clave) usos++;
-  });
-  state.history.forEach(h => {
-    if (normalizeDepto(h.depto) === depto && monthKey(h.ingreso) === clave) usos++;
-  });
-
-  return usos;
-}
-
-function cupoRestante(depto, ref) {
-  return Math.max(0, CONFIG.MONTHLY_LIMIT - usosDelMes(depto, ref));
-}
-
-// null si puede ingresar; string con el motivo si esta bloqueada
-function cooldownBlock(plate, now) {
-  const activo = CONFIG.SPOTS
+// Si la patente ya esta en una cochera lo sabemos sin consultar
+function patenteEstacionada(plate) {
+  const encontrado = CONFIG.SPOTS
     .map(s => ({ spot: s, occ: state.spots[s.id] }))
     .find(x => x.occ && x.occ.patente === plate);
-
-  if (activo) return `La patente ${plate} ya está estacionada en ${activo.spot.name}.`;
-
-  const last = lastEntryFor(plate);
-  if (!last) return null;
-
-  const libreDesde = last.ingreso + CONFIG.COOLDOWN_MS;
-  if (now < libreDesde) {
-    return `La patente ${plate} ya usó la cortesía el ${fmtDateHour(last.ingreso)}. ` +
-           `Podrá volver a ingresar el ${fmtDateHour(libreDesde)} (${fmtDuration(libreDesde - now)} restantes).`;
-  }
-  return null;
+  return encontrado ? encontrado.spot.name : null;
 }
 
 /* ================= Render ================= */
@@ -191,8 +176,33 @@ function renderClock() {
 }
 
 function renderSpots() {
-  const now = Date.now();
   const cont = $('#spots');
+
+  if (carga === 'inicial' || carga === 'cargando') {
+    cont.innerHTML = CONFIG.SPOTS.map(() =>
+      '<article class="spot spot-cargando"><div class="spot-body">' +
+      '<div class="skel skel-line"></div><div class="skel skel-plate"></div>' +
+      '<div class="skel skel-line"></div></div></article>').join('');
+    return;
+  }
+
+  if (carga === 'error') {
+    const msg = errorCarga ? errorCarga.message : 'Error desconocido.';
+    cont.innerHTML = `
+      <article class="spot spot-error">
+        <div class="spot-body">
+          <h2 class="spot-name">No se pudo leer el estado de las cocheras</h2>
+          <p class="spot-empty">${esc(msg)}</p>
+          <p class="spot-empty"><strong>No registres ingresos hasta que
+             esto se resuelva:</strong> sin datos no hay forma de saber si
+             las cocheras están libres.</p>
+          <button class="btn btn-primary btn-block" data-action="reintentar">Reintentar</button>
+        </div>
+      </article>`;
+    return;
+  }
+
+  const now = Date.now();
   cont.innerHTML = CONFIG.SPOTS.map(spot => {
     const occ = state.spots[spot.id];
 
@@ -259,6 +269,14 @@ function renderSpots() {
 
 function renderHistory() {
   const cont = $('#history');
+  const cuenta = $('#history-count');
+
+  if (carga !== 'listo') { cont.innerHTML = ''; cuenta.textContent = ''; return; }
+
+  cuenta.textContent = state.history.length
+    ? `${state.history.length} ${state.history.length === 1 ? 'registro' : 'registros'}`
+    : '';
+
   if (!state.history.length) {
     cont.innerHTML = '<p class="empty-state">Todavía no hay movimientos registrados.</p>';
     return;
@@ -294,6 +312,7 @@ function renderHistory() {
 /* ================= Modal de ingreso ================= */
 
 let entrySpotId = null;
+let enviando = false;
 
 const EGRESO_STEP_MS = 30 * 60 * 1000; // saltos de 30 min
 
@@ -311,6 +330,7 @@ function buildEgresoOptions(ingreso) {
     item.type = 'button';
     item.className = 'dropdown-item';
     item.dataset.ts = String(ts);
+    item.dataset.min = String(i * 30);   // lo que se le manda a la base
     item.setAttribute('role', 'option');
     item.innerHTML =
       `<span class="dd-hour">${fmtHour(ts)}</span><span class="dd-dur">${fmtDuration(dur)}</span>`;
@@ -332,6 +352,7 @@ function selectEgreso(ts) {
     const elegido = item.dataset.ts === String(ts);
     item.classList.toggle('is-selected', elegido);
     item.setAttribute('aria-selected', elegido ? 'true' : 'false');
+    if (elegido) $('#in-egreso').dataset.min = item.dataset.min;
   });
 }
 
@@ -393,27 +414,55 @@ function openEntryModal(spotId) {
   $('#in-ingreso').dataset.ts = String(now);
   buildEgresoOptions(now);
   hideEntryError();
+  setEnviando(false);
 
   $('#entry-modal').hidden = false;
   setTimeout(() => $('#in-patente').focus(), 50);
 }
 
 function closeEntryModal() {
+  if (enviando) return;
   closeEgresoDropdown();
   $('#entry-modal').hidden = true;
   entrySpotId = null;
 }
 
-// Aviso en vivo del cupo mensual mientras se escribe el departamento
+function setEnviando(v) {
+  enviando = v;
+  const btn = $('#entry-submit');
+  btn.disabled = v;
+  btn.textContent = v ? 'Registrando…' : 'Registrar ingreso';
+}
+
+/* Aviso en vivo del cupo mensual mientras se escribe el departamento.
+   Se le pregunta a la base, que es la unica que ve todos los turnos del mes;
+   con debounce para no disparar un pedido por tecla. */
+let cupoTimer = null;
+let cupoToken = 0;
+
 function renderCupo() {
   const el = $('#depto-cupo');
   const depto = normalizeDepto($('#in-depto').value);
 
+  clearTimeout(cupoTimer);
   if (!depto) { el.hidden = true; return; }
 
-  const now = Date.now();
-  const restante = cupoRestante(depto, now);
+  const token = ++cupoToken;
+  cupoTimer = setTimeout(async () => {
+    try {
+      const restante = await RP.cupoRestante(depto);
+      if (token !== cupoToken) return;   // llego tarde, ya se escribio otra cosa
+      pintarCupo(depto, restante);
+    } catch (e) {
+      if (token === cupoToken) el.hidden = true;
+    }
+  }, 350);
+}
+
+function pintarCupo(depto, restante) {
+  const el = $('#depto-cupo');
   const total = CONFIG.MONTHLY_LIMIT;
+  const now = Date.now();
 
   el.className = 'cupo ' + (restante === 0 ? 'cupo-none' : restante === 1 ? 'cupo-warn' : 'cupo-ok');
   el.hidden = false;
@@ -435,51 +484,48 @@ function showEntryError(msg) {
 }
 function hideEntryError() { $('#entry-error').hidden = true; }
 
-function submitEntry(ev) {
+async function submitEntry(ev) {
   ev.preventDefault();
-  if (entrySpotId === null) return;
+  if (entrySpotId === null || enviando) return;
 
   const plate = normalizePlate($('#in-patente').value);
   const depto = normalizeDepto($('#in-depto').value);
-  const ingreso = Number($('#in-ingreso').dataset.ts);
-  const egresoPrev = Number($('#in-egreso').value);
+  const duracionMin = Number($('#in-egreso').dataset.min);
 
+  // Chequeos locales: solo para no mandar un pedido que ya sabemos que falla
   if (!plate) return showEntryError('Ingresá la patente del vehículo.');
   if (!isValidPlate(plate)) {
     return showEntryError('Patente inválida. Formatos válidos: ABC123 o AB123CD.');
   }
   if (!depto) return showEntryError('Indicá el departamento que invita.');
-  if (!egresoPrev) return showEntryError('Elegí la hora de egreso.');
+  if (!duracionMin) return showEntryError('Elegí la hora de egreso.');
 
-  const bloqueo = cooldownBlock(plate, Date.now());
-  if (bloqueo) return showEntryError(bloqueo);
-
-  const restante = cupoRestante(depto, Date.now());
-  if (restante === 0) {
-    return showEntryError(
-      `El departamento ${depto} ya usó sus ${CONFIG.MONTHLY_LIMIT} invitaciones de este mes. ` +
-      `El cupo se renueva el ${fmtDate(nextMonthStart(Date.now()))}.`
-    );
+  const dondeEsta = patenteEstacionada(plate);
+  if (dondeEsta) {
+    return showEntryError(`La patente ${plate} ya está estacionada en ${dondeEsta}.`);
   }
 
-  if (egresoPrev <= ingreso) {
-    return showEntryError('La hora de egreso debe ser posterior al ingreso.');
-  }
-  if (egresoPrev - ingreso > CONFIG.MAX_STAY_MS) {
-    return showEntryError(
-      `La estadía máxima es de 4 h. El egreso no puede ser posterior a las ${fmtHour(ingreso + CONFIG.MAX_STAY_MS)}.`
-    );
-  }
+  hideEntryError();
+  setEnviando(true);
+  try {
+    // El resto de las reglas (cooldown, cupo, cochera libre) las decide
+    // la base, que es la unica que ve lo que hicieron los demas telefonos.
+    const turno = await RP.registrarIngreso(
+      { cochera: entrySpotId, patente: plate, depto, duracionMin });
 
-  state.spots[entrySpotId] = { patente: plate, depto, ingreso, egresoPrev };
-  saveState();
-  closeEntryModal();
-  render();
-  const quedan = restante - 1;
-  toast(`${plate} registrado hasta las ${fmtHour(egresoPrev)} · ` +
-        (quedan === 0
-          ? `el ${depto} se quedó sin cupo este mes`
-          : `al ${depto} le ${quedan === 1 ? 'queda' : 'quedan'} ${quedan} este mes`));
+    setEnviando(false);
+    closeEntryModal();
+    await refrescar({ silencioso: true });
+
+    toast(`${turno.patente} registrado hasta las ${fmtHour(turno.egresoPrev)}`);
+  } catch (e) {
+    setEnviando(false);
+    showEntryError(e.message);
+    // Si la cochera se ocupo mientras tanto, conviene mostrar la realidad
+    if (e.codigo === 'RP_COCHERA_TOMADA' || e.codigo === 'RP_PATENTE_ACTIVA') {
+      refrescar({ silencioso: true });
+    }
+  }
 }
 
 /* ================= Salida ================= */
@@ -505,38 +551,13 @@ function openExitConfirm(spotId) {
       ${exceso ? `<div><span>Exceso</span><span>${fmtDuration(exceso)}</span></div>` : ''}
     </div>`;
 
-  confirmAction = () => {
-    const salida = Date.now();
-    state.history.unshift({
-      patente: occ.patente,
-      depto: occ.depto,
-      spotId,
-      ingreso: occ.ingreso,
-      egresoPrev: occ.egresoPrev,
-      egresoReal: salida
-    });
-    state.history = state.history.slice(0, CONFIG.HISTORY_MAX);
-    state.spots[spotId] = null;
-    saveState();
-    render();
-    toast(`${occ.patente} se retiró · ${fmtDuration(salida - occ.ingreso)}`);
+  confirmAction = async () => {
+    // La hora de salida la pone el servidor, no este telefono
+    const cerrado = await RP.cerrarTurno(occ.id);
+    await refrescar({ silencioso: true });
+    toast(`${cerrado.patente} se retiró · ${fmtDuration(cerrado.egresoReal - cerrado.ingreso)}`);
   };
 
-  $('#confirm-modal').hidden = false;
-}
-
-function openClearHistoryConfirm() {
-  if (!state.history.length) return toast('El historial ya está vacío');
-  $('#confirm-title').textContent = 'Limpiar historial';
-  $('#confirm-body').innerHTML =
-    `<p>Se eliminarán <strong>${state.history.length}</strong> movimientos registrados. ` +
-    `Las patentes dejarán de tener el bloqueo de 24 h. Esta acción no se puede deshacer.</p>`;
-  confirmAction = () => {
-    state.history = [];
-    saveState();
-    render();
-    toast('Historial vacío');
-  };
   $('#confirm-modal').hidden = false;
 }
 
@@ -550,7 +571,8 @@ function closeConfirm() {
 function showApp() {
   $('#login-screen').hidden = true;
   $('#app').hidden = false;
-  render();
+  renderClock();
+  refrescar();
 }
 
 function showLogin() {
@@ -589,6 +611,7 @@ $('#logout-btn').addEventListener('click', () => {
 $('#spots').addEventListener('click', ev => {
   const btn = ev.target.closest('button[data-action]');
   if (!btn) return;
+  if (btn.dataset.action === 'reintentar') return refrescar();
   const spotId = Number(btn.dataset.spot);
   if (btn.dataset.action === 'entry') openEntryModal(spotId);
   if (btn.dataset.action === 'exit') openExitConfirm(spotId);
@@ -629,12 +652,25 @@ $('#entry-modal').addEventListener('click', ev => {
 $('#confirm-modal').addEventListener('click', ev => {
   if (ev.target.closest('[data-close]')) closeConfirm();
 });
-$('#confirm-ok').addEventListener('click', () => {
+
+$('#confirm-ok').addEventListener('click', async () => {
   const fn = confirmAction;
-  closeConfirm();
-  if (fn) fn();
+  if (!fn) return;
+  const btn = $('#confirm-ok');
+  btn.disabled = true;
+  btn.textContent = 'Confirmando…';
+  try {
+    await fn();
+    closeConfirm();
+  } catch (e) {
+    closeConfirm();
+    toast(e.message);
+    refrescar({ silencioso: true });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Confirmar';
+  }
 });
-$('#clear-history').addEventListener('click', openClearHistoryConfirm);
 
 document.addEventListener('keydown', ev => {
   if (ev.key !== 'Escape') return;
@@ -643,17 +679,26 @@ document.addEventListener('keydown', ev => {
   if (!$('#confirm-modal').hidden) closeConfirm();
 });
 
-// Si otra pestaña del mismo dispositivo modifica el estado, refrescamos
-window.addEventListener('storage', ev => {
-  if (ev.key !== STORE_KEY) return;
-  state = loadState();
-  if (!$('#app').hidden) render();
-});
+/* ================= Refresco =================
+   Los datos son compartidos: otro vecino puede registrar desde su
+   telefono en cualquier momento. Se vuelve a leer cada tanto, y sobre
+   todo al volver a la pestana, que es el caso real en un celular. */
 
-// Refresco de relojes y contadores
 setInterval(() => {
-  if (!$('#app').hidden) { renderSpots(); renderClock(); }
-}, 15000);
+  if (!$('#app').hidden && carga === 'listo') { renderSpots(); renderClock(); }
+}, CONFIG.TICK_MS);
+
+setInterval(() => {
+  if (!$('#app').hidden && document.visibilityState === 'visible') {
+    refrescar({ silencioso: true });
+  }
+}, CONFIG.REFRESH_MS);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !$('#app').hidden) {
+    refrescar({ silencioso: true });
+  }
+});
 
 /* ================= Arranque ================= */
 

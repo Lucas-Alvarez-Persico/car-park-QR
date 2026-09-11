@@ -68,7 +68,7 @@
     <section class="panel">
       <div class="panel-head">
         <h2>Movimientos registrados</h2>
-        <button id="clear-history" class="btn btn-ghost btn-sm" type="button">Limpiar</button>
+        <span id="history-count" class="section-note"></span>
       </div>
       <div id="history" class="history"></div>
     </section>
@@ -124,7 +124,7 @@
 
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
-        <button type="submit" class="btn btn-primary">Registrar ingreso</button>
+        <button type="submit" class="btn btn-primary" id="entry-submit">Registrar ingreso</button>
       </div>
     </form>
   </div>
@@ -148,6 +148,8 @@
 
 <div id="toast" class="toast" hidden></div>
 
+<script src="supabase-config.js"></script>
+<script src="db.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
