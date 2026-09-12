@@ -13,6 +13,7 @@ Sitio estático (HTML + CSS + JS), sin dependencias ni build.
 | `img/` | Fotos del estacionamiento, ya recortadas y optimizadas |
 | `supabase/schema.sql` | Esquema, reglas y políticas de la base |
 | `supabase/auth.sql` | Usuarios por departamento y cierre del acceso anónimo |
+| `supabase/keepalive.sql` | Ping diario y cierre de funciones públicas |
 | `supabase-config.js` | URL y anon key del proyecto — **fuera del repo** |
 | `supabase-config.example.js` | Plantilla para copiar en un clon nuevo |
 | `db.js` | Los pedidos contra la base, con `fetch` puro |
@@ -247,6 +248,48 @@ Por eso **se quitó el botón "Limpiar historial"**: el historial ahora es
 compartido y no tiene sentido que cualquiera lo borre desde el teléfono. En su
 lugar el panel muestra la cantidad de registros. Si más adelante hace falta
 purgarlo, va a ser una acción de administrador.
+
+### Mantener el proyecto despierto
+
+El plan Free **pausa los proyectos tras 7 días sin actividad**, y hay que
+despertarlos a mano desde el panel. Para una app de edificio que puede pasar una
+semana sin invitados, eso significa un QR que falla justo cuando alguien lo
+necesita.
+
+La solución: [`supabase/keepalive.sql`](supabase/keepalive.sql) crea una función
+`keepalive()` que hace una lectura real contra la base y devuelve solo la hora
+del servidor, y
+[`.github/workflows/keepalive.yml`](.github/workflows/keepalive.yml) la llama
+una vez por día desde GitHub Actions.
+
+Hay que cargar dos secrets en *Settings → Secrets and variables → Actions*:
+`SUPABASE_URL` y `SUPABASE_ANON_KEY`. Si el ping falla, el job falla y GitHub
+manda un mail — que es la única forma de enterarse antes que los vecinos.
+
+> **Tres advertencias.**
+>
+> 1. Que una lectura cuente como actividad es el comportamiento observado, no
+>    una garantía: Supabase puede cambiar la política sin avisar.
+> 2. **GitHub deshabilita los workflows programados tras 60 días sin actividad
+>    en el repositorio.** O sea que el keep-alive se apaga solo justo en los
+>    proyectos terminados, que son los que más lo necesitan. Se reactiva desde
+>    la pestaña Actions, pero hay que acordarse.
+> 3. Si el sistema pasa a ser algo de lo que dependa el edificio, lo correcto
+>    es el plan Pago y no este parche.
+
+Si el punto 2 preocupa, la alternativa es un cron externo (cron-job.org,
+UptimeRobot) que no se apaga solo, apuntado a la misma URL de `keepalive()`.
+
+### Funciones cerradas al público
+
+Supabase le da `execute` a `anon` sobre todo lo que esté en el esquema `public`.
+Eso dejaba consultables sin sesión `cupo_restante()`, `patente_libre_desde()`,
+`mi_cupo()` y `cerrar_turno()` — o sea que cualquiera con la anon key podía
+averiguar cuántas invitaciones le quedan a un departamento, o si una patente
+estuvo en el edificio. `keepalive.sql` les revoca el permiso.
+
+La única función que queda abierta es `keepalive()`, que no devuelve ningún dato
+del edificio.
 
 ### Dos cosas del plan Free a tener en cuenta
 

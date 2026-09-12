@@ -1,0 +1,47 @@
+# Mantiene despierto el proyecto de Supabase.
+#
+# El plan Free pausa los proyectos tras 7 dias sin actividad. Esta tarea
+# llama una vez por dia a la funcion public.keepalive(), que hace una
+# lectura real contra la base.
+#
+# Requiere dos secrets del repositorio (Settings -> Secrets and variables
+# -> Actions):  SUPABASE_URL  y  SUPABASE_ANON_KEY
+name: Mantener despierta la base
+
+on:
+  schedule:
+    # Todos los dias 12:17 UTC (09:17 en Argentina).
+    # Minuto "raro" a proposito: en la hora en punto el scheduler de GitHub
+    # esta congestionado y las tareas se retrasan o se saltean.
+    - cron: '17 12 * * *'
+  workflow_dispatch:   # permite dispararla a mano para probar
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Llamar a keepalive()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -eu
+          : "${SUPABASE_URL:?Falta el secret SUPABASE_URL}"
+          : "${SUPABASE_ANON_KEY:?Falta el secret SUPABASE_ANON_KEY}"
+
+          url="${SUPABASE_URL%/}/rest/v1/rpc/keepalive"
+          codigo=$(curl -sS -o respuesta.txt -w '%{http_code}' \
+            -X POST "$url" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+
+          echo "HTTP $codigo"
+          echo "Respuesta: $(cat respuesta.txt)"
+
+          # Falla el job si no fue 200, para que GitHub avise por mail
+          if [ "$codigo" != "200" ]; then
+            echo "::error::La base no respondio 200. Puede estar pausada o falto correr keepalive.sql"
+            exit 1
+          fi
