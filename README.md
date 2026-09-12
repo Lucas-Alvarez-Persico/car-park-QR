@@ -13,7 +13,8 @@ Sitio estático (HTML + CSS + JS), sin dependencias ni build.
 | `img/` | Fotos del estacionamiento, ya recortadas y optimizadas |
 | `supabase/schema.sql` | Esquema, reglas y políticas de la base |
 | `supabase/auth.sql` | Usuarios por departamento y cierre del acceso anónimo |
-| `supabase/keepalive.sql` | Ping diario y cierre de funciones públicas |
+| `supabase/keepalive.sql` | Ping diario para que el plan Free no pause el proyecto |
+| `supabase/permisos.sql` | Quién puede ejecutar cada función |
 | `supabase-config.js` | URL y anon key del proyecto — **fuera del repo** |
 | `supabase-config.example.js` | Plantilla para copiar en un clon nuevo |
 | `db.js` | Los pedidos contra la base, con `fetch` puro |
@@ -156,10 +157,12 @@ Google Fonts y tienen fallback a fuentes del sistema.
    (`South America (São Paulo)`).
 2. En el **SQL Editor**, pegar y ejecutar
    [`supabase/schema.sql`](supabase/schema.sql) — tablas, reglas e índices.
-3. Después, en el mismo editor, ejecutar
-   [`supabase/auth.sql`](supabase/auth.sql) — usuarios por departamento y
-   cierre del acceso anónimo. **En este orden**, porque el segundo modifica
-   cosas que crea el primero.
+3. Después, en el mismo editor y **en este orden**, porque cada uno modifica
+   lo que crea el anterior:
+   [`supabase/auth.sql`](supabase/auth.sql) (usuarios por departamento y cierre
+   del acceso anónimo), [`supabase/keepalive.sql`](supabase/keepalive.sql)
+   (ping diario) y [`supabase/permisos.sql`](supabase/permisos.sql) (quién
+   puede ejecutar qué).
 4. En **Project Settings → Data API**, copiar *Project URL* y la clave
    *anon / publishable*, y pegarlas en
    [`supabase-config.js`](supabase-config.js).
@@ -282,14 +285,34 @@ UptimeRobot) que no se apaga solo, apuntado a la misma URL de `keepalive()`.
 
 ### Funciones cerradas al público
 
-Supabase le da `execute` a `anon` sobre todo lo que esté en el esquema `public`.
-Eso dejaba consultables sin sesión `cupo_restante()`, `patente_libre_desde()`,
-`mi_cupo()` y `cerrar_turno()` — o sea que cualquiera con la anon key podía
-averiguar cuántas invitaciones le quedan a un departamento, o si una patente
-estuvo en el edificio. `keepalive.sql` les revoca el permiso.
+**Postgres concede `EXECUTE` a `PUBLIC` en toda función nueva**, y los roles
+`anon` y `authenticated` heredan de `PUBLIC`. Por eso un `revoke ... from anon`
+no hace nada: hay que revocar de `PUBLIC` y recién después conceder a quien
+corresponda. Es un error fácil de cometer y **silencioso** — el `revoke` no
+falla, simplemente no sirve.
 
-La única función que queda abierta es `keepalive()`, que no devuelve ningún dato
-del edificio.
+[`supabase/permisos.sql`](supabase/permisos.sql) lo hace bien y cierra todo lo
+que no tiene por qué ser público. Lo grave que dejaba abierto era
+`crear_depto()`, que es `security definer` y da de alta usuarios: cualquiera con
+la anon key podía crearse un departamento con la contraseña que quisiera y
+entrar a ver el historial completo.
+
+Cómo queda:
+
+| Función | Sin sesión | Logueado |
+|---|---|---|
+| `keepalive()` | ✅ | ✅ |
+| `mi_cupo()`, `cupo_restante()`, `patente_libre_desde()` | ❌ | ✅ |
+| `mi_depto()`, `cerrar_turno()` | ❌ | ✅ |
+| `crear_depto()` | ❌ | ❌ |
+
+`crear_depto()` no se concede a nadie: se sigue pudiendo correr desde el SQL
+Editor, que actúa como dueño de la función y no necesita permiso explícito.
+
+El archivo además deja un `alter default privileges` para que **las funciones
+nuevas no nazcan abiertas**, y termina con una consulta que muestra los permisos
+reales de cada función. Conviene mirarla: es la única forma de comprobar que los
+`revoke` hicieron algo.
 
 ### Dos cosas del plan Free a tener en cuenta
 

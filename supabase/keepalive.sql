@@ -32,17 +32,8 @@ comment on function public.keepalive() is
 grant execute on function public.keepalive() to anon;
 
 
--- ---------------------------------------------------------
--- De paso: cerrar las funciones que no tienen por que ser
--- publicas. Por defecto Supabase le da execute a anon sobre
--- todo lo que este en public, y estas tres filtran informacion
--- del edificio a cualquiera que tenga la anon key.
--- ---------------------------------------------------------
-
-revoke execute on function public.cupo_restante(text)       from anon;
-revoke execute on function public.patente_libre_desde(text) from anon;
-revoke execute on function public.mi_cupo()                 from anon;
-revoke execute on function public.cerrar_turno(uuid)        from anon;
+-- Los permisos de ejecucion (quien puede llamar a que) se manejan
+-- en supabase/permisos.sql, que hay que correr despues de este.
 
 -- Comprobacion: tiene que devolver la hora del servidor.
 select public.keepalive();

@@ -225,7 +225,10 @@ begin
 end;
 $$;
 
-revoke execute on function public.crear_depto(text, text) from anon, authenticated;
+-- OJO: revocar solo de anon NO alcanza. Postgres concede EXECUTE a PUBLIC
+-- en toda funcion nueva y anon hereda de ahi. Los permisos reales los
+-- cierra supabase/permisos.sql, que hay que correr despues.
+revoke execute on function public.crear_depto(text, text) from public, anon, authenticated;
 
 
 -- ---------------------------------------------------------
