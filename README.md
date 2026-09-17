@@ -18,7 +18,6 @@ Sitio estático (HTML + CSS + JS), sin dependencias ni build.
 | `supabase-config.js` | URL y anon key del proyecto — **fuera del repo** |
 | `supabase-config.example.js` | Plantilla para copiar en un clon nuevo |
 | `db.js` | Los pedidos contra la base, con `fetch` puro |
-| `test-db.html` | Página para verificar la conexión y el ciclo completo |
 
 ## Cómo probarla
 
@@ -166,8 +165,9 @@ Google Fonts y tienen fallback a fuentes del sistema.
 4. En **Project Settings → Data API**, copiar *Project URL* y la clave
    *anon / publishable*, y pegarlas en
    [`supabase-config.js`](supabase-config.js).
-5. Abrir `test-db.html` y correr los tres pasos: login, lectura y ciclo
-   completo.
+5. Servir el sitio localmente y entrar con uno de los departamentos de prueba
+   (`1A` / `123`): si carga las cocheras y el chip con el cupo, está todo
+   conectado.
 
 ### Agregar los departamentos reales
 
@@ -265,8 +265,14 @@ del servidor, y
 [`.github/workflows/keepalive.yml`](.github/workflows/keepalive.yml) la llama
 una vez por día desde GitHub Actions.
 
-Hay que cargar dos secrets en *Settings → Secrets and variables → Actions*:
-`SUPABASE_URL` y `SUPABASE_ANON_KEY`. Si el ping falla, el job falla y GitHub
+Hay que cargar `SUPABASE_URL` y `SUPABASE_ANON_KEY` en *Settings → Secrets
+and variables → Actions*, **a nivel repositorio**. Sirven tanto en la pestaña
+*Secrets* como en *Variables* (ninguno de los dos valores es secreto). Lo que
+**no** sirve es cargarlos dentro de un *Environment*, ni en las secciones de
+*Codespaces* o *Dependabot*: el job no los ve.
+
+El primer paso del job, *Revisar configuracion*, muestra dónde encontró cada
+valor (sin mostrarlo). Si el ping falla, es la primera línea a mirar. Si el ping falla, el job falla y GitHub
 manda un mail — que es la única forma de enterarse antes que los vecinos.
 
 > **Tres advertencias.**

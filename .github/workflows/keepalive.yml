@@ -4,8 +4,10 @@
 # llama una vez por dia a la funcion public.keepalive(), que hace una
 # lectura real contra la base.
 #
-# Requiere dos secrets del repositorio (Settings -> Secrets and variables
-# -> Actions):  SUPABASE_URL  y  SUPABASE_ANON_KEY
+# Necesita SUPABASE_URL y SUPABASE_ANON_KEY en
+# Settings -> Secrets and variables -> Actions, a nivel REPOSITORIO.
+# Sirven tanto como "Secrets" como "Variables": ninguno de los dos valores
+# es secreto (la anon key viaja igual en el JS del sitio).
 name: Mantener despierta la base
 
 on:
@@ -20,20 +22,37 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
+      # Dice DONDE encontro cada valor, sin mostrarlo. Si el paso siguiente
+      # falla, esta es la linea que hay que mirar.
+      - name: Revisar configuracion
+        run: |
+          echo "SUPABASE_URL       -> secret: ${{ secrets.SUPABASE_URL != '' }}  variable: ${{ vars.SUPABASE_URL != '' }}"
+          echo "SUPABASE_ANON_KEY  -> secret: ${{ secrets.SUPABASE_ANON_KEY != '' }}  variable: ${{ vars.SUPABASE_ANON_KEY != '' }}"
+
       - name: Llamar a keepalive()
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          # Primero el secret; si no esta, la variable del mismo nombre
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || vars.SUPABASE_ANON_KEY }}
         run: |
           set -eu
-          : "${SUPABASE_URL:?Falta el secret SUPABASE_URL}"
-          : "${SUPABASE_ANON_KEY:?Falta el secret SUPABASE_ANON_KEY}"
 
-          url="${SUPABASE_URL%/}/rest/v1/rpc/keepalive"
+          ayuda="Cargalo en Settings > Secrets and variables > Actions, a nivel repositorio (no en un Environment, ni en Codespaces o Dependabot)."
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            echo "::error::Falta SUPABASE_URL. $ayuda"; exit 1
+          fi
+          if [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::Falta SUPABASE_ANON_KEY. $ayuda"; exit 1
+          fi
+
+          # Mismo criterio que tools/build.sh: espacios y barras finales fuera
+          base=$(printf '%s' "$SUPABASE_URL" | tr -d '[:space:]' | sed 's#/*$##')
+          key=$(printf '%s' "$SUPABASE_ANON_KEY" | tr -d '[:space:]')
+
           codigo=$(curl -sS -o respuesta.txt -w '%{http_code}' \
-            -X POST "$url" \
-            -H "apikey: $SUPABASE_ANON_KEY" \
-            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -X POST "$base/rest/v1/rpc/keepalive" \
+            -H "apikey: $key" \
+            -H "Authorization: Bearer $key" \
             -H "Content-Type: application/json" \
             -d '{}')
 
@@ -42,6 +61,6 @@ jobs:
 
           # Falla el job si no fue 200, para que GitHub avise por mail
           if [ "$codigo" != "200" ]; then
-            echo "::error::La base no respondio 200. Puede estar pausada o falto correr keepalive.sql"
+            echo "::error::La base no respondio 200. Puede estar pausada, o faltar keepalive.sql / permisos.sql."
             exit 1
           fi
